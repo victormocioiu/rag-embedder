@@ -1,0 +1,31 @@
+name: build
+on:
+  push: {branches: [main]}
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions: {contents: read, packages: write}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/rag-embedder:sha-${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/rag-embedder:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+# The model artifact comes from the rag-embedder-model image (built by
+# build-model.yml), so this build is light (~2 min).
+# Both GHCR packages must be PUBLIC (or the cluster needs an imagePullSecret):
+# rag-embedder for node pulls, rag-embedder-model for in-cluster builds.

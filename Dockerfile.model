@@ -1,0 +1,23 @@
+# Model artifact image: the exported + quantized ONNX model and nothing else.
+# Built on GitHub runners by .github/workflows/build-model.yml — the export
+# loads torch and needs ~3GB RAM, more than in-cluster builders have.
+# Rebuilt only when the model, quant target, or export tooling changes.
+# The app Dockerfile COPYs /models out of this image.
+#
+# QUANT_TARGET: avx512 | avx512_vnni | avx2 | arm64
+# Current node has AVX-512 WITHOUT vnni -> avx512. See docs/adr/0003.
+
+FROM python:3.12-slim AS export
+WORKDIR /build
+RUN pip install --no-cache-dir uv
+COPY pyproject.toml ./
+RUN uv pip install --system --group export
+COPY scripts/ scripts/
+ARG MODEL_ID=intfloat/multilingual-e5-small
+ARG QUANT_TARGET=avx512
+RUN python scripts/export_model.py \
+      --model ${MODEL_ID} --target ${QUANT_TARGET} --out /models/onnx-int8 \
+ && test -f /models/onnx-int8/tokenizer.json
+
+FROM scratch
+COPY --from=export /models /models
