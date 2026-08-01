@@ -1,0 +1,9 @@
+.git
+.venv
+.remember
+__pycache__
+*.pyc
+onnx-*
+models
+.env
+.DS_Store

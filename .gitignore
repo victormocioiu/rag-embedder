@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Model artifacts — built at image build time, never committed
+onnx-*/
+models/
+
+# Local env
+.env
+
+# IDE
+.idea/

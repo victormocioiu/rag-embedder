@@ -1,0 +1,47 @@
+[project]
+name = "rag-embedder"
+version = "0.1.0"
+description = "ONNX embedding service. Deliberately depends on nothing internal."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "onnxruntime>=1.20",
+    "tokenizers>=0.20",
+    "numpy>=2.1",
+    "prometheus-client>=0.21",
+    "structlog>=24.4",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "httpx>=0.27", "ruff>=0.8", "mypy>=1.13"]
+# export script targets the classic optimum CLI; `onnxruntime quantize` was
+# dropped in 1.27 when ONNX support moved to the optimum-onnx package
+# torch <2.9: 2.9+ defaults torch.onnx.export to the dynamo path (needs
+# onnxscript, different graph); optimum 1.26 was validated on the legacy exporter
+export = ["optimum[exporters,onnxruntime]>=1.23,<1.27", "transformers>=4.46", "torch>=2.5,<2.9"]
+# parity_check.py only -- the PyTorch reference implementation
+parity = ["sentence-transformers>=3.0"]
+# plot_benchmarks.py only
+plots = ["matplotlib>=3.8", "seaborn>=0.13"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rag_embedder"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[[tool.mypy.overrides]]
+# no type stubs / py.typed marker upstream
+module = ["onnxruntime.*", "tokenizers.*"]
+ignore_missing_imports = true
