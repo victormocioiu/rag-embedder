@@ -47,27 +47,46 @@ class BatchResult:
 
 
 class DynamicBatcher:
-    def __init__(self, max_size: int, max_wait_ms: int, embed_fn: EmbedFn) -> None:
+    def __init__(self, max_size: int, max_wait_ms: int, embed_fn: EmbedFn,
+                 token_budget: int = 3840, max_length: int = 512) -> None:
         self.max_size = max_size
         self.max_wait_ms = max_wait_ms
         self.embed_fn = embed_fn
+        self.token_budget = token_budget
+        self.max_length = max_length
         self.queue: asyncio.Queue[PendingRequest] = asyncio.Queue()
+        self._carryover: PendingRequest | None = None
 
     async def submit(self, texts: list[str], input_type: str) -> BatchResult:
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         await self.queue.put(PendingRequest(texts, input_type, future))
         return await future
 
+    def _est_tokens(self, texts: list[str]) -> int:
+        # chars/4 is a serviceable pre-tokenization estimate for the memory
+        # cap; clamped because the engine truncates at max_length anyway
+        return sum(min(len(t) // 4 + 1, self.max_length) for t in texts)
+
     async def run(self) -> None:
-        """Collector loop: drain up to max_size texts, or flush after
-        max_wait_ms -- whichever comes first."""
+        """Collector loop: drain until max_size texts OR the token budget is
+        reached, or flush after max_wait_ms -- whichever comes first.
+
+        The token budget is the memory cap. Counting texts is not enough:
+        32 queries is a tiny batch, 32 near-max-length passages is ~16K
+        padded tokens and an arena the pod limit cannot hold. Memory is in
+        tokens, so the flush cap must be too. A request that would blow the
+        budget carries over to the next flush; a single over-budget request
+        flushes alone (the engine truncates rows at max_length, so its
+        worst case is bounded)."""
         loop = asyncio.get_running_loop()
         while True:
-            first = await self.queue.get()
+            first = self._carryover or await self.queue.get()
+            self._carryover = None
             batch = [first]
             total = len(first.texts)
+            est_tokens = self._est_tokens(first.texts)
             deadline = loop.time() + self.max_wait_ms / 1000
-            while total < self.max_size:
+            while total < self.max_size and est_tokens < self.token_budget:
                 remaining = deadline - loop.time()
                 if remaining <= 0:
                     break
@@ -75,8 +94,13 @@ class DynamicBatcher:
                     request = await asyncio.wait_for(self.queue.get(), remaining)
                 except TimeoutError:
                     break
+                request_tokens = self._est_tokens(request.texts)
+                if est_tokens + request_tokens > self.token_budget:
+                    self._carryover = request
+                    break
                 batch.append(request)
                 total += len(request.texts)
+                est_tokens += request_tokens
             await self._flush(batch, total)
 
     async def _flush(self, batch: list[PendingRequest], total: int) -> None:

@@ -65,6 +65,8 @@ async def lifespan(app: FastAPI):
         max_size=s.batch_max_size,
         max_wait_ms=s.batch_max_wait_ms,
         embed_fn=embed_and_record,
+        token_budget=s.batch_token_budget,
+        max_length=s.max_sequence_length,
     )
     collector = asyncio.create_task(batcher.run())
     state["engine"] = engine

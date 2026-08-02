@@ -158,3 +158,62 @@ async def test_multi_text_request_stays_intact():
             assert np.allclose(vec, identity_vector(text, "passage"))
     finally:
         runner.cancel()
+
+
+async def test_token_budget_caps_flush_of_long_texts():
+    """The memory-cap contract: many long texts queued at once must NOT be
+    reassembled into one giant flush. 12 requests of 8 x ~1920-char texts
+    (~480 estimated tokens each) against a 3840-token budget -> every
+    engine call stays at or under ~8 long texts."""
+    fake = FakeEmbed()
+    batcher = DynamicBatcher(max_size=32, max_wait_ms=5, embed_fn=fake,
+                             token_budget=3840, max_length=512)
+    runner = asyncio.create_task(batcher.run())
+    try:
+        long_text = "x" * 1920
+        submits = [
+            batcher.submit([f"{long_text}{i}-{j}" for j in range(8)], "passage")
+            for i in range(12)
+        ]
+        await asyncio.wait_for(asyncio.gather(*submits), timeout=5.0)
+        assert len(fake.calls) >= 12, "long-text requests were merged"
+        for texts, _ in fake.calls:
+            est = sum(min(len(t) // 4 + 1, 512) for t in texts)
+            # a flush may exceed the budget only when it is a single
+            # request (which the engine bounds via max_length truncation)
+            if len(texts) > 8:
+                assert est <= 3840, f"multi-request flush over budget: {est}"
+    finally:
+        runner.cancel()
+
+
+async def test_carryover_request_is_not_lost():
+    """A request stashed as carryover must still be answered."""
+    fake = FakeEmbed()
+    batcher = DynamicBatcher(max_size=32, max_wait_ms=20, embed_fn=fake,
+                             token_budget=100, max_length=512)
+    runner = asyncio.create_task(batcher.run())
+    try:
+        texts = ["y" * 300, "z" * 300, "w" * 300]  # ~76 est tokens each
+        results = await asyncio.wait_for(
+            asyncio.gather(*(batcher.submit([t], "passage") for t in texts)),
+            timeout=5.0)
+        for text, res in zip(texts, results):
+            assert np.allclose(res.vectors[0],
+                               identity_vector(text, "passage"))
+    finally:
+        runner.cancel()
+
+
+async def test_short_texts_still_batch_up_under_budget():
+    """Queries must keep batching: the budget only bites on long texts."""
+    fake = FakeEmbed()
+    batcher = DynamicBatcher(max_size=8, max_wait_ms=10_000, embed_fn=fake,
+                             token_budget=3840, max_length=512)
+    runner = asyncio.create_task(batcher.run())
+    try:
+        submits = [batcher.submit([f"short {i}"], "query") for i in range(8)]
+        results = await asyncio.wait_for(asyncio.gather(*submits), timeout=2.0)
+        assert all(r.batch_size == 8 for r in results)
+    finally:
+        runner.cancel()
