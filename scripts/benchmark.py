@@ -24,20 +24,22 @@ from pathlib import Path
 WORDS = ["retrieval", "augmented", "generation", "embeds", "document", "chunks", "into", "dense", "vectors", "stored", "beside", "their", "metadata", "the", "service", "exposes", "an", "endpoint", "accepting", "batches", "applies", "the", "passage", "prefix", "mean", "pools", "over", "the", "attention", "mask", "and", "normalises", "every", "vector", "before", "returning", "it", "to", "the", "caller"]
 
 
-def make_texts(n: int = 128) -> list[str]:
-    """~40-word synthetic passages, deterministic, all distinct."""
+def make_texts(n: int = 128, words: int = 40) -> list[str]:
+    """~`words`-word synthetic passages, deterministic, all distinct.
+    40 words ~ a short sentence; 330 words ~ a 480-token chunk."""
     out = []
     for i in range(n):
-        words = [WORDS[(i * 7 + j * 3) % len(WORDS)] for j in range(40)]
-        out.append(" ".join(words) + f" ({i})")
+        picks = [WORDS[(i * 7 + j * 3) % len(WORDS)] for j in range(words)]
+        out.append(" ".join(picks) + f" ({i})")
     return out
 
 
-def bench_worker(model_path: str, intra: int, batches: list[int]) -> None:
+def bench_worker(model_path: str, intra: int, batches: list[int],
+                 words: int = 40) -> None:
     from rag_embedder.engine import EmbeddingEngine
 
     engine = EmbeddingEngine(model_path, intra_op_num_threads=intra)
-    texts = make_texts()
+    texts = make_texts(words=words)
     results = []
     for b in batches:
         batch = (texts * (b // len(texts) + 1))[:b]
@@ -65,13 +67,15 @@ def main() -> int:
     p.add_argument("--model-path", required=True, help="comma-separated model dirs")
     p.add_argument("--intra", default="1,2", help="comma-separated thread counts")
     p.add_argument("--batches", default="1,8,16,32,64,128")
+    p.add_argument("--words", type=int, default=40,
+                   help="words per synthetic text (330 ~ a 480-token chunk)")
     p.add_argument("--json", default=None, help="also write results to this file")
     p.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     a = p.parse_args()
 
     batches = [int(x) for x in a.batches.split(",")]
     if a.worker:
-        bench_worker(a.model_path, int(a.intra), batches)
+        bench_worker(a.model_path, int(a.intra), batches, a.words)
         return 0
 
     configs = []
@@ -79,7 +83,8 @@ def main() -> int:
         for intra in (int(x) for x in a.intra.split(",")):
             proc = subprocess.run(
                 [sys.executable, __file__, "--worker", "--model-path", model,
-                 "--intra", str(intra), "--batches", a.batches],
+                 "--intra", str(intra), "--batches", a.batches,
+                 "--words", str(a.words)],
                 capture_output=True, text=True, check=True)
             r = json.loads(proc.stdout.strip().splitlines()[-1])
             r["model"] = Path(model).name
