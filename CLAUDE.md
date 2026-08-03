@@ -21,6 +21,12 @@ everything else. Keep it that way.
    optimum 1.26 the `avx512` and `avx512_vnni` presets emit byte-identical
    models (both default `reduce_range=False`); the target records intent —
    the parity gate is what actually verifies accuracy on the serving CPU.
+7. **The batcher's flush cap is a TOKEN budget, not a text count**
+   (`batch_token_budget`, chars/4 estimate, carryover for overflow). Learned
+   in production: concurrent ingest re-assembled 8-text requests into
+   32-long-passage flushes → arena past the pod limit → all replicas
+   OOMKilled (2026-08-02, EnterpriseRAG-Bench ingest). `max_size` alone
+   does NOT bound memory.
 
 ## State
 
